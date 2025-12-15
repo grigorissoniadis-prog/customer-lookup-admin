@@ -1,0 +1,153 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin - Customer Lookup</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    body{font-family:Arial;margin:12px}
+    label{display:block;margin-top:8px;font-weight:600}
+    input,textarea{width:100%;padding:8px;box-sizing:border-box}
+    #map{height:320px;margin-top:8px;border:1px solid #ccc}
+    button{margin-top:8px;padding:8px 12px}
+    .row{display:flex;gap:8px}
+    .col{flex:1}
+  </style>
+</head>
+<body>
+  <h2>Admin — Customer Lookup</h2>
+  <div>
+    <label>Admin token</label>
+    <input id="adminToken" placeholder="Βάλε εδώ το admin token" />
+  </div>
+
+  <div style="margin-top:12px;">
+    <label>Τηλέφωνο (π.χ. +30...)</label>
+    <div class="row">
+      <div class="col"><input id="phoneInput" placeholder="+30..." /></div>
+      <div style="width:120px"><button id="searchBtn">Αναζήτηση</button></div>
+    </div>
+  </div>
+
+  <div id="result" style="display:none;margin-top:16px">
+    <h3 id="formTitle">Πελάτης</h3>
+    <label>Τηλέφωνο</label><input id="phone" readonly/>
+    <label>Όνομα</label><input id="name" />
+    <label>Διεύθυνση</label><input id="address" />
+    <div class="row"><div class="col"><button id="geocodeBtn">Εμφάνισε στο χάρτη</button></div><div style="width:140px"><button id="saveBtn">Αποθήκευση</button></div></div>
+    <label class="row"><div class="col">Όροφος</div><div class="col">Κουδούνι</div></label>
+    <div class="row"><input id="floor" /><input id="buzzer" /></div>
+    <label>Σημειώσεις</label><textarea id="notes" rows="2"></textarea>
+    <div id="coords" style="margin-top:8px">Συντεταγμένες: <span id="lat">-</span>, <span id="lng">-</span></div>
+    <div id="map"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const apiBase = '/api';
+    let adminToken = '';
+    let currentCustomer = null;
+    let map, marker;
+
+    document.getElementById('adminToken').addEventListener('input', e => adminToken = e.target.value.trim());
+
+    function authHeaders(){ return { 'Content-Type':'application/json', 'Authorization':'Bearer ' + adminToken }; }
+
+    document.getElementById('searchBtn').addEventListener('click', async () => {
+      const phone = document.getElementById('phoneInput').value.trim();
+      if (!phone) return alert('Βάλε τηλέφωνο');
+      if (!adminToken) return alert('Βάλε admin token');
+      try {
+        const res = await fetch(`${apiBase}/customers?phone=${encodeURIComponent(phone)}`, { headers: authHeaders() });
+        if (!res.ok) { const e = await res.json().catch(()=>({})); return alert('Σφάλμα: ' + (e.error || res.status)); }
+        const data = await res.json();
+        if (data.length) { currentCustomer = data[0]; showCustomer(currentCustomer,false); }
+        else { currentCustomer = { phone, name:'', address_text:'', floor:'', buzzer:'', lat:null, lng:null, notes:'' }; showCustomer(currentCustomer,true); }
+      } catch (err) { console.error(err); alert('Σφάλμα σύνδεσης'); }
+    });
+
+    function showCustomer(c,isNew){
+      document.getElementById('result').style.display = 'block';
+      document.getElementById('formTitle').innerText = isNew ? 'Νέος Πελάτης' : 'Πελάτης';
+      document.getElementById('phone').value = c.phone || '';
+      document.getElementById('name').value = c.name || '';
+      document.getElementById('address').value = c.address_text || '';
+      document.getElementById('floor').value = c.floor || '';
+      document.getElementById('buzzer').value = c.buzzer || '';
+      document.getElementById('notes').value = c.notes || '';
+      document.getElementById('lat').innerText = c.lat || '-';
+      document.getElementById('lng').innerText = c.lng || '-';
+      initMap(c.lat,c.lng);
+    }
+
+    document.getElementById('geocodeBtn').addEventListener('click', async () => {
+      const address = document.getElementById('address').value.trim();
+      if (!address) return alert('Γράψε διεύθυνση');
+      try {
+        const res = await fetch(`${apiBase}/geocode?address=${encodeURIComponent(address)}`, { headers: authHeaders() });
+        if (!res.ok) { const e = await res.json().catch(()=>({})); return alert('Geocode σφάλμα: ' + (e.error || res.status)); }
+        const j = await res.json();
+        currentCustomer.lat = j.lat; currentCustomer.lng = j.lng;
+        document.getElementById('lat').innerText = j.lat; document.getElementById('lng').innerText = j.lng;
+        setMarker([j.lng,j.lat]); map.flyTo([j.lng,j.lat], 16);
+      } catch (err) { console.error(err); alert('Σφάλμα geocode'); }
+    });
+
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const payload = {
+        phone: document.getElementById('phone').value,
+        name: document.getElementById('name').value,
+        address_text: document.getElementById('address').value,
+        floor: document.getElementById('floor').value,
+        buzzer: document.getElementById('buzzer').value,
+        notes: document.getElementById('notes').value,
+        lat: currentCustomer.lat,
+        lng: currentCustomer.lng
+      };
+      try {
+        let res;
+        if (currentCustomer && currentCustomer.id) {
+          res = await fetch(`${apiBase}/customers?id=${currentCustomer.id}`, { method:'PUT', headers:authHeaders(), body:JSON.stringify(payload) });
+        } else {
+          res = await fetch(`${apiBase}/customers`, { method:'POST', headers:authHeaders(), body:JSON.stringify(payload) });
+        }
+        if (!res.ok) { const e = await res.json().catch(()=>({})); return alert('Σφάλμα αποθήκευσης: ' + (e.error || res.status)); }
+        const saved = await res.json();
+        currentCustomer = saved;
+        showCustomer(currentCustomer,false);
+        alert('Αποθηκεύτηκε');
+      } catch (err) { console.error(err); alert('Σφάλμα αποθήκευσης'); }
+    });
+
+    function initMap(lat,lng){
+      if (!map){
+        map = L.map('map').setView([37.9838,23.7275], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
+        map.on('click', e => {
+          const p = e.latlng;
+          currentCustomer.lat = p.lat; currentCustomer.lng = p.lng;
+          document.getElementById('lat').innerText = p.lat.toFixed(6);
+          document.getElementById('lng').innerText = p.lng.toFixed(6);
+          setMarker([p.lng,p.lat]);
+        });
+      } else {
+        if (lat && lng) map.setView([lat,lng],16);
+      }
+      if (lat && lng) setMarker([lng,lat]);
+    }
+
+    function setMarker(lnglat){
+      if (!map) return;
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([lnglat[1],lnglat[0]], { draggable:true }).addTo(map);
+      marker.on('dragend', () => {
+        const p = marker.getLatLng();
+        currentCustomer.lat = p.lat; currentCustomer.lng = p.lng;
+        document.getElementById('lat').innerText = p.lat.toFixed(6);
+        document.getElementById('lng').innerText = p.lng.toFixed(6);
+      });
+    }
+  </script>
+</body>
+</html>
