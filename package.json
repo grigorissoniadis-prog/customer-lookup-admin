@@ -1,0 +1,12 @@
+{
+  "name": "customer-lookup-admin",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "vercel-build": "echo skip"
+  },
+  "dependencies": {
+    "pg": "^8.11.0",
+    "libphonenumber-js": "^1.10.31"
+  }
+}
